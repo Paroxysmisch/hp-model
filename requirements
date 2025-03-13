@@ -1,4 +1,4 @@
-torch
+torch==2.5.0
 torchvision
 torchaudio
 skrl [torch]
@@ -8,3 +8,10 @@ matplotlib
 einops
 tbparse
 mamba-ssm[causal-conv1d]
+torch_geometric
+-f https://data.pyg.org/whl/torch-2.5.0+cu124.html
+pyg_lib
+torch_scatter
+torch_sparse
+torch_cluster
+torch_spline_conv

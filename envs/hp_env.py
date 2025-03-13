@@ -147,4 +147,4 @@ class HPEnv(gym.Env):
         observation = self.observe()
         self.first_turn_left = False
 
-        return observation, {}
+        return observation, {"state": self.state}

@@ -9,6 +9,7 @@ from time import time
 import gymnasium as gym
 import numpy as np
 import torch
+from torch.nn import Transformer
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
@@ -19,7 +20,7 @@ from models import *
 
 seq = "HHHPPHPHPHPPHPHPHPPH"
 seed = 42
-algo = "mamba_v2"
+algo = "transformer"
 num_episodes = 100_000
 
 base_dir = f"./{datetime.datetime.now().strftime('%m%d-%H%M')}-"
@@ -173,7 +174,7 @@ elif network_choice == "MambaModel":
     hidden_size = 64
     num_layers = 2
 
-    print("RNN_LSTM_onlyLastHidden with:")
+    print("MambaModel with:")
     print(
         f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
     )
@@ -184,6 +185,25 @@ elif network_choice == "MambaModel":
     q_target = MambaModel(
         input_size, hidden_size, num_layers, n_actions, device
     ).to(device)
+elif network_choice == "TransformerModel":
+    # config for Transformer
+    input_size = row_width
+    # number of nodes in the hidden layers
+    hidden_size = 128
+    num_layers = 2
+
+    print("TransformerModel with:")
+    print(
+        f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
+    )
+    # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
+    q = TransformerModel(input_size, hidden_size, num_layers, n_actions, device).to(
+        device
+    )
+    q_target = TransformerModel(
+        input_size, hidden_size, num_layers, n_actions, device
+    ).to(device)
+
 
 q_target.load_state_dict(q.state_dict())
 

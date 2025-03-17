@@ -119,8 +119,15 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, : x.size(1), :].to(x.device)
 
 
+def create_attention_mask(seq_len, max_offset=2):
+    # True indicates values that should not participate in the attention calculation
+    mask = torch.zeros(seq_len, seq_len).bool()
+    mask |= torch.triu(torch.ones(seq_len, seq_len).bool(), diagonal=(max_offset + 1))
+    mask |= torch.tril(torch.ones(seq_len, seq_len).bool(), diagonal=-(max_offset + 1))
+    return mask
+
 class TransformerModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, num_classes, device):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes, device, mask=False):
         super(TransformerModel, self).__init__()
         self.hidden_size = hidden_size
         self.expander = nn.Linear(input_size, self.hidden_size)
@@ -133,12 +140,16 @@ class TransformerModel(nn.Module):
         self.fc = nn.Linear(hidden_size, num_classes)
         self.device = device
         self.positional_encoding = PositionalEncoding(d_model=hidden_size)
+        self.mask = mask
 
     def forward(self, x):
         x = x.to(self.device)
         x = self.expander(x)
         x = self.positional_encoding(x)
-        x = self.transformer(x)
+        if self.mask:
+            x = self.transformer(x, mask=create_attention_mask(x.size(-2)))
+        else:
+            x = self.transformer(x)
         out = self.fc(x[:, -1, :])
 
         return out

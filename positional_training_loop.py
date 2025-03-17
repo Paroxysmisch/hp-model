@@ -202,11 +202,11 @@ elif network_choice == "TransformerModel":
         f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
     )
     # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
-    q = TransformerModel(input_size, hidden_size, num_layers, n_actions, device).to(
+    q = TransformerModel(input_size, hidden_size, num_layers, n_actions, device, mask=True).to(
         device
     )
     q_target = TransformerModel(
-        input_size, hidden_size, num_layers, n_actions, device
+        input_size, hidden_size, num_layers, n_actions, device, mask=True
     ).to(device)
 
 

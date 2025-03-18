@@ -5,7 +5,10 @@ import torch.nn.functional as F
 import torch_scatter
 from mamba_ssm import Mamba, Mamba2
 from torch import nn
+from torch_geometric.data import Batch, Data
 from torch_geometric.nn.conv import GATv2Conv
+from torch_geometric.nn.models import GIN, GAT
+from torch_geometric.nn.pool import global_add_pool
 
 
 class RNN_LSTM_onlyLastHidden(nn.Module):
@@ -126,8 +129,11 @@ def create_attention_mask(seq_len, max_offset=2):
     mask |= torch.tril(torch.ones(seq_len, seq_len).bool(), diagonal=-(max_offset + 1))
     return mask
 
+
 class TransformerModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, num_classes, device, mask=False):
+    def __init__(
+        self, input_size, hidden_size, num_layers, num_classes, device, mask=False
+    ):
         super(TransformerModel, self).__init__()
         self.hidden_size = hidden_size
         self.expander = nn.Linear(input_size, self.hidden_size)
@@ -151,6 +157,158 @@ class TransformerModel(nn.Module):
         else:
             x = self.transformer(x)
         out = self.fc(x[:, -1, :])
+
+        return out
+
+    def sample_action(self, obs, epsilon):
+        """
+        greedy epsilon choose
+        """
+        coin = random.random()
+        if coin < epsilon:
+            explore_action = random.randint(0, 2)
+            return explore_action
+        else:
+            # print("exploit")
+            out = self.forward(obs)
+            return out.argmax().item()
+
+
+def fully_connected_directed_edge_index(n):
+    row, col = torch.meshgrid(torch.arange(n), torch.arange(n), indexing="ij")
+    edge_index = torch.stack([row.flatten(), col.flatten()], dim=0)
+    return edge_index
+
+
+class GATModel(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        num_layers,
+        num_classes,
+        device,
+        fully_connected=False,
+    ):
+        super(GATModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.expander = nn.Linear(input_size, self.hidden_size)
+        self.num_layers = num_layers
+        self.gnn = nn.ModuleList(
+            [
+                GATv2Conv(
+                    in_channels=self.hidden_size,
+                    out_channels=self.hidden_size,
+                    add_self_loops=True,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+        self.fc = nn.Linear(hidden_size, num_classes)
+        self.device = device
+        self.positional_encoding = PositionalEncoding(d_model=hidden_size)
+        self.fully_connected = fully_connected
+
+    def forward(self, x):
+        x = x.to(self.device)
+        N = x.size(-2)
+        if self.fully_connected:
+            edge_index = fully_connected_directed_edge_index(N).to(self.device)
+        else:
+            edges = (
+                torch.tensor([[i, i + 1] for i in range(N - 1)]).to(self.device).T
+            )  # Create edges (0→1, 1→2, ..., N-2→N-1)
+            # Convert to PyG edge_index format (2, num_edges)
+            edge_index = torch.cat(
+                [edges, edges.flip(0)], dim=1
+            )  # Add reverse edges for undirected graph
+
+        x = self.expander(x)
+        x = self.positional_encoding(x)
+
+        # Use the PyTorch Geometric Batch class if x is batched
+        if x.dim() == 3:
+            data_list = [Data(x=x[i], edge_index=edge_index) for i in range(len(x))]
+            batch = Batch.from_data_list(data_list)
+            for conv in self.gnn:
+                x = conv(batch.x, batch.edge_index)
+            out = global_add_pool(x, batch.batch)
+        else:
+            for conv in self.gnn:
+                x = conv(x, edge_index)
+            out = global_add_pool(x)
+
+        out = self.fc(out)
+
+        return out
+
+    def sample_action(self, obs, epsilon):
+        """
+        greedy epsilon choose
+        """
+        coin = random.random()
+        if coin < epsilon:
+            explore_action = random.randint(0, 2)
+            return explore_action
+        else:
+            # print("exploit")
+            out = self.forward(obs)
+            return out.argmax().item()
+
+
+class GINModel(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        num_layers,
+        num_classes,
+        device,
+        fully_connected=False,
+    ):
+        super(GINModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.expander = nn.Linear(input_size, self.hidden_size)
+        self.num_layers = num_layers
+        self.gnn = GIN(
+            in_channels=hidden_size,
+            out_channels=hidden_size,
+            hidden_channels=hidden_size,
+            num_layers=self.num_layers,
+        )
+        self.fc = nn.Linear(hidden_size, num_classes)
+        self.device = device
+        self.positional_encoding = PositionalEncoding(d_model=hidden_size)
+        self.fully_connected = fully_connected
+
+    def forward(self, x):
+        x = x.to(self.device)
+        N = x.size(-2)
+        if self.fully_connected:
+            edge_index = fully_connected_directed_edge_index(N).to(self.device)
+        else:
+            edges = (
+                torch.tensor([[i, i + 1] for i in range(N - 1)]).to(self.device).T
+            )  # Create edges (0→1, 1→2, ..., N-2→N-1)
+            # Convert to PyG edge_index format (2, num_edges)
+            edge_index = torch.cat(
+                [edges, edges.flip(0)], dim=1
+            )  # Add reverse edges for undirected graph
+
+        x = self.expander(x)
+        x = self.positional_encoding(x)
+
+        # Use the PyTorch Geometric Batch class if x is batched
+        if x.dim() == 3:
+            data_list = [Data(x=x[i], edge_index=edge_index) for i in range(len(x))]
+            batch = Batch.from_data_list(data_list)
+            out = self.gnn(x=batch.x, edge_index=batch.edge_index, batch=batch.batch)
+            out = out.reshape(-1, N, self.hidden_size)
+        else:
+            out = self.gnn(x=x, edge_index=edge_index)
+
+        out = torch.sum(out, dim=-2)
+        out = self.fc(out)
 
         return out
 

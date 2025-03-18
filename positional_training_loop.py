@@ -9,9 +9,9 @@ from time import time
 import gymnasium as gym
 import numpy as np
 import torch
-from torch.nn import Transformer
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.nn import Transformer
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -20,11 +20,11 @@ from models import *
 
 seq = "HHHPPHPHPHPPHPHPHPPH"
 seed = 42
-algo = "positional_transformer_normalized"
+algo = "positional_gin_fully_connected"
 num_episodes = 100_000
 
 base_dir = f"./{datetime.datetime.now().strftime('%m%d-%H%M')}-"
-config_str = f"{seq[:6]}-{algo}-{seed}-{num_episodes}"
+config_str = f"{seq[:6]}-{len(seq)}-mer-{algo}-{seed}-{num_episodes}"
 save_path = base_dir + config_str + "/"
 writer = SummaryWriter(f"logs/{save_path}")
 
@@ -121,7 +121,9 @@ def one_hot_state(observation_states, observation_sequence):
     sequence_length = observation_sequence.shape[-1]
     observation_states = torch.tensor(observation_states).float()
     num_laid_out = observation_states.size(-2)
-    observation_states = F.pad(observation_states, (0, 0, 0, sequence_length - num_laid_out))
+    observation_states = F.pad(
+        observation_states, (0, 0, 0, sequence_length - num_laid_out)
+    )
     observation_states = observation_states / float(sequence_length)
     one_hot_sequence = F.one_hot(torch.from_numpy(observation_sequence), num_classes=2)
     one_hot_input = torch.cat([observation_states, one_hot_sequence], dim=-1).float()
@@ -149,7 +151,7 @@ print(initial_state)
 n_actions = env.action_space.n
 print("n_actions = ", n_actions)
 
-network_choice = "MambaModel"
+network_choice = "GINModel"
 row_width = pos_depth + hp_depth
 col_length = len(seq)
 
@@ -166,9 +168,9 @@ if network_choice == "RNN_LSTM_onlyLastHidden":
         f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
     )
     # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
-    q = RNN_LSTM_onlyLastHidden(input_size, hidden_size, num_layers, n_actions, device).to(
-        device
-    )
+    q = RNN_LSTM_onlyLastHidden(
+        input_size, hidden_size, num_layers, n_actions, device
+    ).to(device)
     q_target = RNN_LSTM_onlyLastHidden(
         input_size, hidden_size, num_layers, n_actions, device
     ).to(device)
@@ -184,12 +186,10 @@ elif network_choice == "MambaModel":
         f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
     )
     # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
-    q = MambaModel(input_size, hidden_size, num_layers, n_actions, device).to(
+    q = MambaModel(input_size, hidden_size, num_layers, n_actions, device).to(device)
+    q_target = MambaModel(input_size, hidden_size, num_layers, n_actions, device).to(
         device
     )
-    q_target = MambaModel(
-        input_size, hidden_size, num_layers, n_actions, device
-    ).to(device)
 elif network_choice == "TransformerModel":
     # config for Transformer
     input_size = row_width
@@ -202,12 +202,44 @@ elif network_choice == "TransformerModel":
         f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
     )
     # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
-    q = TransformerModel(input_size, hidden_size, num_layers, n_actions, device, mask=True).to(
-        device
-    )
+    q = TransformerModel(
+        input_size, hidden_size, num_layers, n_actions, device, mask=True
+    ).to(device)
     q_target = TransformerModel(
         input_size, hidden_size, num_layers, n_actions, device, mask=True
     ).to(device)
+elif network_choice == "GATModel":
+    # config for Transformer
+    input_size = row_width
+    # number of nodes in the hidden layers
+    hidden_size = 128
+    num_layers = 2
+
+    print("TransformerModel with:")
+    print(
+        f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
+    )
+    # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
+    q = GATModel(input_size, hidden_size, num_layers, n_actions, device, fully_connected=True).to(device)
+    q_target = GATModel(input_size, hidden_size, num_layers, n_actions, device, fully_connected=True).to(
+        device
+    )
+elif network_choice == "GINModel":
+    # config for Transformer
+    input_size = row_width
+    # number of nodes in the hidden layers
+    hidden_size = 128
+    num_layers = 2
+
+    print("TransformerModel with:")
+    print(
+        f"inputs_size={input_size} hidden_size={hidden_size} num_layers={num_layers} num_classes={n_actions}"
+    )
+    # Initialize network (try out just using simple RNN, or GRU, and then compare with LSTM)
+    q = GINModel(input_size, hidden_size, num_layers, n_actions, device, fully_connected=True).to(device)
+    q_target = GINModel(input_size, hidden_size, num_layers, n_actions, device, fully_connected=True).to(
+        device
+    )
 
 
 q_target.load_state_dict(q.state_dict())
@@ -423,7 +455,11 @@ for n_episode in tqdm(range(num_episodes)):
     writer.add_scalar("Reward (Episode)", score, n_episode)
     # Add window of max episodic reward over the last 200 episodes onto Tensorboard
     if n_episode > 200:
-        writer.add_scalar("Reward (Episode Windowed)", np.max(rewards_all_episodes[n_episode - 200 : n_episode]), n_episode)
+        writer.add_scalar(
+            "Reward (Episode Windowed)",
+            np.max(rewards_all_episodes[n_episode - 200 : n_episode]),
+            n_episode,
+        )
     # update max reward found so far
     if score > reward_max:
         print("found new highest reward = ", score)
